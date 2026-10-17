@@ -13,6 +13,9 @@ PLATFORMS = [Platform.SENSOR]
 async def async_setup_entry(hass: HomeAssistant, entry: EnergieBeConfigEntry) -> bool:
     """Set up Energie.be from a config entry."""
     coordinator = EnergieBeCoordinator(hass, entry)
+    # Before the first refresh, which raises ConfigEntryNotReady on failure:
+    # with the cache in hand a site outage no longer costs the user every entity.
+    await coordinator.async_restore()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 

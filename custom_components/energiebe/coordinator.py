@@ -6,6 +6,7 @@ import logging
 import re
 import ssl
 from dataclasses import dataclass
+from datetime import datetime
 from urllib.parse import urlparse
 
 import aiohttp
@@ -14,6 +15,7 @@ from bs4 import BeautifulSoup, Tag
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
@@ -22,6 +24,7 @@ from homeassistant.helpers.issue_registry import (
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from .cache import CACHE_VERSION, CachedData, from_json, is_usable, to_json
 from .atrias import (
     AtriasError,
     GcvReport,
@@ -77,6 +80,9 @@ class EnergieBeData:
     # fetch and the cache are empty. The five original sensors never depend on
     # it, so a VREG outage cannot take them down.
     tariffs: TariffComponents | None = None
+    # Set only when these values came out of the cache rather than off the
+    # website, so a stale number is identifiable in the UI and in automations.
+    cached_at: datetime | None = None
 
     @property
     def gas_m3(self) -> float:
@@ -253,17 +259,77 @@ class EnergieBeCoordinator(DataUpdateCoordinator[EnergieBeData]):
         self._vtest: Asset | None = None
         self._network: Asset | None = None
         self._tariffs: TariffComponents | None = None
+        self._store: Store[dict] = Store(hass, CACHE_VERSION, f"{DOMAIN}.{entry.entry_id}")
+        self._cached: CachedData | None = None
+
+    async def async_restore(self) -> None:
+        """Load the last good tariffs, before the first refresh needs them.
+
+        Called from async_setup_entry: the first refresh raises
+        ConfigEntryNotReady when it fails, which would leave the user with no
+        entities at all, so the cache has to be in hand before it runs.
+        """
+        self._cached = from_json(await self._store.async_load())
+        if self._cached is not None:
+            self._tariffs = self._cached.tariffs
+            _LOGGER.debug(
+                "Restored the tariffs scraped at %s", self._cached.scraped_at
+            )
 
     async def _async_update_data(self) -> EnergieBeData:
         """Scrape the tariffs and pair them with the current conversion factor."""
-        prices = await self._async_scrape_prices()
+        cached_at: datetime | None = None
+        try:
+            prices = await self._async_scrape_prices()
+        except UpdateFailed:
+            # The site is serving something else. A price from earlier this
+            # month is still the tariff in force -- see cache.is_usable -- and
+            # is worth far more than every sensor going unavailable.
+            if (fallback := self._usable_cache()) is None:
+                raise
+            _LOGGER.warning(
+                "Could not read the tariffs; serving the values scraped at %s",
+                fallback.scraped_at,
+            )
+            prices = {
+                "electricity": fallback.electricity,
+                "gas_kwh": fallback.gas_kwh,
+                "injection": fallback.injection,
+            }
+            cached_at = fallback.scraped_at
+
         factor, source = await self._async_conversion_factor()
-        return EnergieBeData(
+        data = EnergieBeData(
             **prices,
             gas_conversion_factor=factor,
             gas_conversion_source=source,
             tariffs=await self._async_tariff_components(),
+            cached_at=cached_at,
         )
+        if cached_at is None:
+            self._async_save(data)
+        return data
+
+    def _usable_cache(self) -> CachedData | None:
+        """Return the cached values if they are still the tariff in force."""
+        if self._cached is None:
+            return None
+        return self._cached if is_usable(self._cached, dt_util.now()) else None
+
+    def _async_save(self, data: EnergieBeData) -> None:
+        """Remember a successful scrape for the next restart."""
+        cached = CachedData(
+            electricity=data.electricity,
+            gas_kwh=data.gas_kwh,
+            injection=data.injection,
+            scraped_at=dt_util.now(),
+            tariffs=data.tariffs,
+        )
+        self._cached = cached
+        # Delayed: the daily tick has no reason to block on a disk write. The
+        # closure holds this record, not the attribute, so a later update
+        # cannot change what this save writes.
+        self._store.async_delay_save(lambda: to_json(cached), 10)
 
     async def _async_tariff_components(self) -> TariffComponents | None:
         """Return the cost components on top of the energy price.

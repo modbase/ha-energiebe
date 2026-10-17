@@ -31,6 +31,10 @@ class EnergieBeSensorEntityDescription(SensorEntityDescription):
 
     value_fn: Callable[[EnergieBeData], float]
     attributes_fn: Callable[[EnergieBeData], dict[str, Any]] | None = None
+    # Whether this value comes off the tariff page, and so can be served from
+    # the cache. The gas conversion factor does not: it has its own source and
+    # its own fallback.
+    from_scrape: bool = True
 
 
 SENSORS: tuple[EnergieBeSensorEntityDescription, ...] = (
@@ -80,6 +84,7 @@ SENSORS: tuple[EnergieBeSensorEntityDescription, ...] = (
         icon="mdi:swap-horizontal",
         value_fn=lambda data: data.gas_conversion_factor,
         attributes_fn=lambda data: {"source": data.gas_conversion_source},
+        from_scrape=False,
     ),
 )
 
@@ -134,10 +139,14 @@ class EnergieBeSensor(CoordinatorEntity[EnergieBeCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Return where the conversion factor came from, where relevant."""
-        if (attributes_fn := self.entity_description.attributes_fn) is None:
-            return None
-        return attributes_fn(self.coordinator.data)
+        """Return the value's provenance: its source, and its age if cached."""
+        data = self.coordinator.data
+        attributes: dict[str, Any] = {}
+        if (attributes_fn := self.entity_description.attributes_fn) is not None:
+            attributes.update(attributes_fn(data))
+        if self.entity_description.from_scrape and data.cached_at is not None:
+            attributes["cached_at"] = data.cached_at.isoformat()
+        return attributes or None
 
 
 class EnergieBeAllInPriceSensor(CoordinatorEntity[EnergieBeCoordinator], SensorEntity):
@@ -188,8 +197,11 @@ class EnergieBeAllInPriceSensor(CoordinatorEntity[EnergieBeCoordinator], SensorE
         data = self.coordinator.data
         if (components := data.tariffs) is None:
             return None
-        return {
+        attributes: dict[str, Any] = {
             **components.as_attributes(),
             "energy_component": data.electricity,
             "energy_component_source": URL,
         }
+        if data.cached_at is not None:
+            attributes["cached_at"] = data.cached_at.isoformat()
+        return attributes

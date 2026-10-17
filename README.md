@@ -53,9 +53,11 @@ Note the missing default on the price: `| float` without one makes the cost unav
 
 **Flanders only.** The operator list comes from VREG, which regulates the Flemish distribution network operators. Brussels (Sibelga) and Wallonia publish their tariffs elsewhere.
 
-### Serving the wrong page
+### Surviving the wrong page
 
 Energie.be runs on Azure App Service, and its instances serve each other's cached renders: on any given request the tariff page may come back as the home page or a campaign page instead. The first response also sets an `ARRAffinity` cookie, which would otherwise pin Home Assistant to one instance for as long as it runs — so every retry would fetch the same wrong page. The integration drops that cookie and reasks until the tariff page arrives, up to eight times.
+
+When even that fails — on 2026-10-17 the wrong-page rate reached 100% for about ten minutes — the last successful scrape is served instead, and `cached_at` appears as an attribute on the price sensors so a carried-forward value is always identifiable. The cache is kept on disk, so it survives a restart, and it expires when the month turns: the variable tariff is re-indexed monthly, so a price scraped in October is the October tariff for all of October and the wrong number in November. Once it expires the sensors go unavailable, as they did before.
 
 ## 📁 Installation
 
