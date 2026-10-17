@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **No new dependency.** `manifest.json` `requirements` stays exactly `["beautifulsoup4==4.13.3"]`. If a task seems to need openpyxl, pandas or a PDF parser, the task is wrong.
+- **No new dependency.** `manifest.json` `requirements` stays exactly `["beautifulsoup4>=4.13.3"]`. If a task seems to need openpyxl, pandas or a PDF parser, the task is wrong.
 - **Every value inside `tariffs.py` is excl. VAT.** The only multiplication by `(1 + vat_rate)` in the whole codebase lives in `TariffComponents`. No literal `1.06` anywhere else.
 - **A component whose VAT basis cannot be established must not be published.**
 - **Locate cells by matching header text, never by fixed row or column index.** Verified reason: the same sheet yields `Exclusief btw` at row index 7 with one reader and 4 with another, depending only on whether blank rows are kept. Match the text.
