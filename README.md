@@ -17,6 +17,7 @@ This custom integration for [Home Assistant](https://www.home-assistant.io/) add
   | Entity | Unit |
   | --- | --- |
   | `sensor.energie_be_electricity_price` | €/kWh |
+  | `sensor.energie_be_all_in_electricity_price` | €/kWh |
   | `sensor.energie_be_injection_price` | €/kWh |
   | `sensor.energie_be_gas_price_eur_kwh` | €/kWh |
   | `sensor.energie_be_gas_price_eur_m3` | €/m³ |
@@ -32,6 +33,25 @@ Energie.be quotes gas in c€/kWh, but Belgian meters read m³. The conversion d
 Pick your station during setup and the integration tracks that value automatically; `sensor.energie_be_gas_conversion_factor` exposes the figure in use, with the station and source month as attributes. If you don't know your GOS, ask your grid operator, or leave it on the Belgian average — every active station currently sits within about 1% of it.
 
 When Atrias can't be reached the €/m³ sensor falls back to that average rather than going unavailable, and the attribute says so.
+
+### All-in electricity price
+
+`sensor.energie_be_electricity_price` is the energy component only — between a third and a half of what a kWh costs. Set your distribution network operator under **Configure** and the integration also publishes `sensor.energie_be_all_in_electricity_price`.
+
+That figure is the energy component plus the green-certificate and cogeneration levies ([VREG V-test](https://www.vlaamsenutsregulator.be/cijfers/v-test-data-en-energieprijscurves), monthly), your operator's distribution tariff ([VREG](https://www.vlaamsenutsregulator.be/elektriciteit-en-aardgas/nettarieven/hoeveel-bedragen-de-distributienettarieven), yearly) and the two statutory levies, with 6% VAT applied once. Every component, its source and its validity date are attributes of the sensor, so the number can always be taken apart. Both VREG files are fetched conditionally, so a 4 MB download happens about monthly rather than daily, and Home Assistant raises a repair if either source stops being refreshed.
+
+A daily cost is then one template sensor:
+
+```jinja
+{{ (states('sensor.daily_electricity_import') | float(0)
+    * states('sensor.energie_be_all_in_electricity_price') | float) | round(2) }}
+```
+
+Note the missing default on the price: `| float` without one makes the cost unavailable when the price is, rather than silently reporting a plausible, smaller, wrong number.
+
+**What it excludes:** the capacity tariff (billed per kW of monthly peak), the data-management fee and your supplier's standing charge. Those are per-month and per-year amounts, not per-kWh, so they cannot be folded into a €/kWh figure. It is an estimate from public data, not a bill.
+
+**Flanders only.** The operator list comes from VREG, which regulates the Flemish distribution network operators. Brussels (Sibelga) and Wallonia publish their tariffs elsewhere.
 
 ### Serving the wrong page
 
@@ -63,7 +83,9 @@ cp -r ha-energiebe/custom_components/energiebe /path/to/config/custom_components
 
 ## ⚙️ Configuration
 
-Add the integration from **Settings → Devices & Services → Add Integration → Energie.be** and pick your gas reception station (GOS) from the list. You can change it later via **Configure** on the integration card.
+Add the integration from **Settings → Devices & Services → Add Integration → Energie.be** and pick your gas reception station (GOS) from the list.
+
+**Configure** on the integration card then offers the rest: your distribution network operator, whether you have a digital or an analogue meter, which tariff scheme your consumption is billed on, your Energie.be product and the VAT rate. Leave the operator unset and everything works as before, minus the all-in price sensor.
 
 ## 🙏 Credits
 
