@@ -447,3 +447,65 @@ def statutory_components(vat_rate: float = DEFAULT_VAT_RATE) -> tuple[Component,
         )
         for row in STATUTORY_TABLE
     )
+
+
+# How far behind a source may fall before the user is told. The V-test is
+# published monthly and the current month's file appears during that month, so
+# two months behind means a publication was missed, not that we are early.
+MAX_VTEST_AGE_MONTHS = 2
+# The statutory levies change by legislation; a year and a half without anyone
+# checking is long enough to ask.
+MAX_STATUTORY_AGE_MONTHS = 18
+
+
+def build(
+    *,
+    network: Component,
+    vtest: dict[str, Component],
+    vat_rate: float = DEFAULT_VAT_RATE,
+) -> TariffComponents:
+    """Combine the parsed sources into one set of components.
+
+    Raises rather than returning a partial set: an all-in price missing a
+    component is not a low price, it is a wrong one.
+    """
+    components = (network, *vtest.values(), *statutory_components(vat_rate))
+    present = frozenset(component.key for component in components)
+    if missing := REQUIRED_KEYS - present:
+        raise TariffError(f"Incomplete tariff components, missing {sorted(missing)}")
+    return TariffComponents(components=components, vat_rate=vat_rate)
+
+
+def _months_between(earlier: date, later: date) -> int:
+    return (later.year - earlier.year) * 12 + later.month - earlier.month
+
+
+def stale_reasons(components: TariffComponents, today: date) -> tuple[str, ...]:
+    """Return a reason per source that has fallen behind, newest rule first."""
+    reasons: list[str] = []
+    by_key = {component.key: component for component in components.components}
+
+    if (levy := by_key.get("gsc")) and _months_between(
+        levy.valid_from, today
+    ) > MAX_VTEST_AGE_MONTHS:
+        reasons.append(
+            f"The V-test figures are from {levy.valid_from:%B %Y} "
+            f"({levy.source}); VREG publishes a new file every month."
+        )
+
+    network = by_key.get("network")
+    if network and network.valid_until and network.valid_until < today:
+        reasons.append(
+            f"The distributienettarief expired on {network.valid_until:%d/%m/%Y} "
+            f"({network.source}); VREG approves new tariffs every year."
+        )
+
+    statutory = [by_key[key] for key in ("excise", "energy_levy") if key in by_key]
+    if statutory:
+        newest = max(component.valid_from for component in statutory)
+        if _months_between(newest, today) > MAX_STATUTORY_AGE_MONTHS:
+            reasons.append(
+                f"The bundled taksen en heffingen date from {newest:%B %Y} and "
+                "are only updated by a release of this integration."
+            )
+    return tuple(reasons)
