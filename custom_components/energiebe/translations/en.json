@@ -17,10 +17,38 @@
     "step": {
       "init": {
         "title": "Energie.be",
-        "description": "Change the reception station (GOS) used to convert the gas price from kWh to m³.",
+        "description": "Change the reception station (GOS) used to convert the gas price from kWh to m³, and the components the all-in electricity price is built from.",
         "data": {
-          "gos_ean": "Gas reception station (GOS)"
+          "gos_ean": "Gas reception station (GOS)",
+          "network_operator": "Distribution network operator",
+          "meter_kind": "Meter",
+          "tariff_scheme": "Tariff scheme",
+          "product": "Energie.be product",
+          "vat_rate": "VAT rate"
+        },
+        "data_description": {
+          "network_operator": "Needed for the all-in electricity price. Flemish operators only — VREG does not publish tariffs for Brussels or Wallonia.",
+          "meter_kind": "A digital meter and an analogue meter pay different distribution tariffs.",
+          "tariff_scheme": "Which register your consumption is billed on.",
+          "product": "Your Energie.be contract, as the VREG V-test names it.",
+          "vat_rate": "0.06 for domestic electricity in Belgium."
         }
+      }
+    }
+  },
+  "selector": {
+    "meter_kind": {
+      "options": {
+        "digital": "Digital meter",
+        "classic": "Analogue meter"
+      }
+    },
+    "tariff_scheme": {
+      "options": {
+        "single": "Single rate",
+        "dual_day": "Dual rate — day",
+        "dual_night": "Dual rate — night",
+        "night_only": "Exclusive night"
       }
     }
   }
