@@ -225,3 +225,162 @@ def parse_network_tariffs(
     raise TariffError(
         f"No {row_label!r} row in the {block_label!r} {_EXCL_VAT} block"
     )
+
+
+# VREG names the V-test sheet after the year it covers.
+_VTEST_SHEET_PREFIX = "Var-dyn (excl. btw)"
+
+# The sheet writes months as Dutch three-letter abbreviations.
+_MONTHS: dict[str, int] = {
+    "jan": 1, "feb": 2, "mrt": 3, "apr": 4, "mei": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "okt": 10, "nov": 11, "dec": 12,
+}
+
+# Columns, verified against the October 2026 file.
+_VT_YEAR, _VT_MONTH, _VT_SEGMENT = 0, 1, 2
+_VT_CONTRACT, _VT_SUPPLIER, _VT_PRODUCT = 4, 5, 6
+_VT_LINE, _VT_PRICE = 8, 30
+
+# The two per-kWh levies this integration needs, by the line they are published
+# under. Everything else in the sheet is either the energy formula itself (which
+# we scrape instead) or a standing charge (out of scope, see the spec).
+_VTEST_LEVIES: dict[str, str] = {
+    "gsc": "Kosten groene stroom (c€/kWh)",
+    "wkk": "Kosten WKK (c€/kWh)",
+}
+
+# Both levies are a few tenths of a c€/kWh. A euro per kWh means we read the
+# wrong column.
+_MAX_LEVY_CENTS = 100.0
+
+
+def _vtest_sheet(sheets: dict[str, list[list[str]]]) -> list[list[str]]:
+    for name, rows in sheets.items():
+        if name.startswith(_VTEST_SHEET_PREFIX):
+            return rows
+    raise TariffError(
+        f"No {_VTEST_SHEET_PREFIX!r} sheet; the workbook has {sorted(sheets)}"
+    )
+
+
+def _vtest_month(row: list[str]) -> date | None:
+    month = _MONTHS.get(_text(row, _VT_MONTH).lower())
+    year = _text(row, _VT_YEAR)
+    if month is None or not year.isdigit():
+        return None
+    return date(int(year), month, 1)
+
+
+def _is_electricity_consumption(row: list[str]) -> bool:
+    return _text(row, _VT_CONTRACT) == "Afname" and _text(
+        row, _VT_PRODUCT
+    ).lower().startswith("elektriciteit")
+
+
+def vtest_suppliers(sheets: dict[str, list[list[str]]]) -> tuple[str, ...]:
+    """Return every supplier the file carries, sorted, whitespace normalised."""
+    rows = _vtest_sheet(sheets)
+    names = {
+        _text(row, _VT_SUPPLIER)
+        for row in rows[1:]
+        if _text(row, _VT_SUPPLIER) and _vtest_month(row) is not None
+    }
+    return tuple(sorted(names))
+
+
+def vtest_products(
+    sheets: dict[str, list[list[str]]], *, supplier: str, segment: str = "Woning"
+) -> tuple[str, ...]:
+    """Return a supplier's electricity consumption products for a segment."""
+    wanted = " ".join(supplier.split())
+    products = {
+        _text(row, _VT_PRODUCT)
+        for row in _vtest_sheet(sheets)[1:]
+        if _text(row, _VT_SUPPLIER) == wanted
+        and _text(row, _VT_SEGMENT) == segment
+        and _is_electricity_consumption(row)
+    }
+    return tuple(sorted(products))
+
+
+def vtest_months(sheets: dict[str, list[list[str]]]) -> tuple[date, ...]:
+    """Return the months the file carries, newest first."""
+    months = {
+        month
+        for row in _vtest_sheet(sheets)[1:]
+        if (month := _vtest_month(row)) is not None
+    }
+    return tuple(sorted(months, reverse=True))
+
+
+def parse_vtest(
+    sheets: dict[str, list[list[str]]],
+    *,
+    supplier: str,
+    product: str,
+    month: date,
+    segment: str = "Woning",
+) -> dict[str, Component]:
+    """Return the per-kWh levies a supplier's product carries, excl. VAT.
+
+    The newest file is published during the month it covers, so a request for a
+    month the file does not carry yet reads the newest month present and says so
+    in the component's source rather than failing.
+    """
+    rows = _vtest_sheet(sheets)
+    wanted_supplier = " ".join(supplier.split())
+    wanted_product = " ".join(product.split())
+
+    available = vtest_months(sheets)
+    if not available:
+        raise TariffError("The V-test sheet carries no months")
+    asked = date(month.year, month.month, 1)
+    if asked in available:
+        effective = asked
+    elif earlier := [candidate for candidate in available if candidate <= asked]:
+        # The file for the current month appears during that month, so until it
+        # does the newest month present is the right answer, not an error.
+        effective = max(earlier)
+    else:
+        effective = min(available)
+
+    components: dict[str, Component] = {}
+    for key, line in _VTEST_LEVIES.items():
+        matches = [
+            row
+            for row in rows[1:]
+            if _vtest_month(row) == effective
+            and _text(row, _VT_SEGMENT) == segment
+            and _text(row, _VT_CONTRACT) == "Afname"
+            and _text(row, _VT_SUPPLIER) == wanted_supplier
+            and _text(row, _VT_PRODUCT) == wanted_product
+            and _text(row, _VT_LINE) == line
+        ]
+        if not matches:
+            raise TariffError(
+                f"No {line!r} row for {wanted_supplier} / {wanted_product} / "
+                f"{segment} / {effective:%Y-%m}"
+            )
+        if len(matches) > 1:
+            raise TariffError(
+                f"{len(matches)} rows match {line!r} for {wanted_supplier} / "
+                f"{wanted_product} / {effective:%Y-%m}; cannot tell them apart"
+            )
+        raw = _text(matches[0], _VT_PRICE)
+        try:
+            cents = float(raw)
+        except ValueError as err:
+            raise TariffError(f"{line!r} is not a number: {raw!r}") from err
+        if not 0 <= cents < _MAX_LEVY_CENTS:
+            raise TariffError(f"Implausible {line!r}: {cents} c€/kWh")
+        components[key] = Component(
+            key=key,
+            value=cents / 100,
+            source=(
+                f"VREG V-test {effective:%Y-%m} (excl. btw), "
+                f"{wanted_supplier} / {wanted_product}"
+            ),
+            valid_from=effective,
+            valid_until=None,
+        )
+    return components
