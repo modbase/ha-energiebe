@@ -92,7 +92,10 @@ async def async_setup_entry(
     """Set up the Energie.be sensors."""
     coordinator = entry.runtime_data
     async_add_entities(
-        EnergieBeSensor(coordinator, description) for description in SENSORS
+        [
+            *(EnergieBeSensor(coordinator, description) for description in SENSORS),
+            EnergieBeAllInPriceSensor(coordinator),
+        ]
     )
 
 
@@ -135,3 +138,58 @@ class EnergieBeSensor(CoordinatorEntity[EnergieBeCoordinator], SensorEntity):
         if (attributes_fn := self.entity_description.attributes_fn) is None:
             return None
         return attributes_fn(self.coordinator.data)
+
+
+class EnergieBeAllInPriceSensor(CoordinatorEntity[EnergieBeCoordinator], SensorEntity):
+    """What a kWh actually costs: energy plus levies, network and taxes.
+
+    Separate from the table-driven sensors above because it is the one entity
+    that can be unavailable while the others are fine -- it needs components the
+    regulator publishes, and a partial set must never be published as a price.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "All-in Electricity Price"
+    _attr_native_unit_of_measurement = PRICE_PER_KWH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 4
+    _attr_icon = "mdi:cash-multiple"
+
+    def __init__(self, coordinator: EnergieBeCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        entry_id = coordinator.config_entry.entry_id
+        self._attr_unique_id = f"{entry_id}_all_in"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry_id)},
+            name="Energie.be",
+            manufacturer="Energie.be",
+            model="Public tariff page (unofficial)",
+            entry_type=DeviceEntryType.SERVICE,
+            configuration_url=URL,
+        )
+
+    @property
+    def available(self) -> bool:
+        """Only available with a full set of components to price with."""
+        return super().available and self.coordinator.data.tariffs is not None
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the all-in price per kWh, VAT included."""
+        data = self.coordinator.data
+        if (components := data.tariffs) is None:
+            return None
+        return components.all_in_price(data.electricity)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return every component, its source, and its validity date."""
+        data = self.coordinator.data
+        if (components := data.tariffs) is None:
+            return None
+        return {
+            **components.as_attributes(),
+            "energy_component": data.electricity,
+            "energy_component_source": URL,
+        }
