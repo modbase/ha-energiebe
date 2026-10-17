@@ -14,6 +14,11 @@ from bs4 import BeautifulSoup, Tag
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.issue_registry import (
+    IssueSeverity,
+    async_create_issue,
+    async_delete_issue,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -49,6 +54,7 @@ from .tariffs import (
     build,
     parse_network_tariffs,
     parse_vtest,
+    stale_reasons,
 )
 from .vreg import NETWORK_PATTERN, VTEST_PATTERN, Asset, VregError, async_load_asset
 
@@ -97,6 +103,8 @@ _FUEL_KEYWORDS: dict[str, tuple[str, ...]] = {
 _TARIFF_MARKER = "app-fair-price-item"
 
 _SCRAPE_HOST = urlparse(URL).hostname or ""
+
+_STALE_ISSUE = "stale_tariffs"
 
 # A tariff outside this band means we read the wrong element, or the page
 # stopped quoting c€/kWh. Either way, better to fail than to publish it.
@@ -307,7 +315,30 @@ class EnergieBeCoordinator(DataUpdateCoordinator[EnergieBeData]):
                 " (keeping the last known values)" if self._tariffs else "",
             )
 
+        self._async_check_staleness()
         return self._tariffs
+
+    def _async_check_staleness(self) -> None:
+        """Raise a repair when a source has stopped being refreshed.
+
+        Silence is the failure mode worth designing against here: a number that
+        is two years old looks exactly like a number that is right.
+        """
+        if self._tariffs is None:
+            return
+        reasons = stale_reasons(self._tariffs, today=dt_util.now().date())
+        if not reasons:
+            async_delete_issue(self.hass, DOMAIN, _STALE_ISSUE)
+            return
+        async_create_issue(
+            self.hass,
+            DOMAIN,
+            _STALE_ISSUE,
+            is_fixable=False,
+            severity=IssueSeverity.WARNING,
+            translation_key="stale_tariffs",
+            translation_placeholders={"reasons": " ".join(reasons)},
+        )
 
     async def _async_scrape_prices(self) -> dict[str, float]:
         """Fetch and parse the Energie.be tariff page."""

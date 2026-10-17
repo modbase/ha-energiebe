@@ -51,5 +51,11 @@
         "night_only": "Exclusive night"
       }
     }
+  },
+  "issues": {
+    "stale_tariffs": {
+      "title": "Energie.be tariff components are out of date",
+      "description": "The all-in electricity price is being computed from figures that are no longer current, so it is probably wrong.\n\n{reasons}\n\nUpdating the integration usually fixes this. If it does not, open an issue — the bundled taxes and levies may need a new release."
+    }
   }
 }
