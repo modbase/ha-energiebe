@@ -42,6 +42,7 @@ from .const import (
     VREG_VTEST_PAGE,
 )
 from .coordinator import EnergieBeConfigEntry
+from .options import merge_options
 from .tariffs import (
     DEFAULT_VAT_RATE,
     METER_KINDS,
@@ -251,7 +252,7 @@ class EnergieBeOptionsFlow(OptionsFlow):
             ean = user_input[CONF_GOS_EAN]
             return self.async_create_entry(
                 data={
-                    **user_input,
+                    **merge_options(self.config_entry.options, user_input),
                     CONF_GOS_NAME: _label_for(stations, ean),
                 }
             )
