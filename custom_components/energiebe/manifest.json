@@ -1,0 +1,12 @@
+{
+  "domain": "energiebe",
+  "name": "Energie.be",
+  "codeowners": ["@modbase"],
+  "config_flow": true,
+  "documentation": "https://github.com/modbase/ha-energiebe",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/modbase/ha-energiebe/issues",
+  "requirements": ["beautifulsoup4==4.13.3"],
+  "version": "1.0.3"
+}

@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Energie.be",
+        "description": "Energie.be quotes gas per kWh. To show a price per m³, the integration needs the calorific value of the gas at your reception station (GOS), which Atrias publishes monthly. Pick yours below, or leave it on the Belgian average if you don't know it — your grid operator can tell you.",
+        "data": {
+          "gos_ean": "Gas reception station (GOS)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Energie.be is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Energie.be",
+        "description": "Change the reception station (GOS) used to convert the gas price from kWh to m³.",
+        "data": {
+          "gos_ean": "Gas reception station (GOS)"
+        }
+      }
+    }
+  }
+}
