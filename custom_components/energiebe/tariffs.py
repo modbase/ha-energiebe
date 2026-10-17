@@ -384,3 +384,66 @@ def parse_vtest(
             valid_until=None,
         )
     return components
+
+
+# Levies set by law rather than by a regulator's spreadsheet. Neither VREG file
+# carries them -- the V-test states "De nettarieven en heffingen zijn niet
+# opgenomen in dit bestand" -- so they live here, each recording the figure
+# exactly as published, the document it came from, and the VAT basis that
+# document used.
+#
+# vat_basis is the open question of the design. The Energie.be tariff card says
+# "Alle prijzen zijn inclusief btw tenzij anders vermeld" and marks only the
+# Energiefonds contribution otherwise, which makes these two incl. VAT. But a
+# statutory excise rate is normally set excl. VAT with VAT levied on top, and
+# secondary sources quote 5.0329 c€/kWh as the excl.-VAT rate. The card's own
+# reading is used here because it is the document in hand; it is recorded in the
+# source so the choice shows up in the sensor's attributes instead of being
+# buried. Settling it against an invoice line moves the all-in price by about
+# 0.3 c€/kWh: 0.3339 becomes 0.3370 EUR/kWh.
+STATUTORY_TABLE: tuple[dict[str, object], ...] = (
+    {
+        "key": "excise",
+        "cents_per_kwh": 5.0329,
+        "vat_basis": "incl",
+        "valid_from": date(2026, 10, 1),
+        "source": "Energie.be tariefkaart oktober 2026, Taksen en heffingen "
+        "(Bijzondere accijns op energie, incl. btw volgens de kaart)",
+    },
+    {
+        "key": "energy_levy",
+        "cents_per_kwh": 0.2042,
+        "vat_basis": "incl",
+        "valid_from": date(2026, 10, 1),
+        "source": "Energie.be tariefkaart oktober 2026, Taksen en heffingen "
+        "(Bijdrage op de energie, incl. btw volgens de kaart)",
+    },
+)
+
+
+def _normalise(*, cents_per_kwh: float, vat_basis: str, vat_rate: float) -> float:
+    """Return a published figure as EUR/kWh excl. VAT."""
+    value = cents_per_kwh / 100
+    if vat_basis == "excl":
+        return value
+    if vat_basis == "incl":
+        return value / (1 + vat_rate)
+    raise TariffError(f"Unknown VAT basis {vat_basis!r}")
+
+
+def statutory_components(vat_rate: float = DEFAULT_VAT_RATE) -> tuple[Component, ...]:
+    """Return the statutory levies as components, excl. VAT."""
+    return tuple(
+        Component(
+            key=str(row["key"]),
+            value=_normalise(
+                cents_per_kwh=float(row["cents_per_kwh"]),
+                vat_basis=str(row["vat_basis"]),
+                vat_rate=vat_rate,
+            ),
+            source=str(row["source"]),
+            valid_from=row["valid_from"],  # type: ignore[arg-type]
+            valid_until=None,
+        )
+        for row in STATUTORY_TABLE
+    )
