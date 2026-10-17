@@ -26,13 +26,31 @@ from .atrias import (
 )
 from .const import (
     CONF_GOS_EAN,
+    CONF_METER_KIND,
+    CONF_NETWORK_OPERATOR,
+    CONF_PRODUCT,
+    CONF_TARIFF_SCHEME,
+    CONF_VAT_RATE,
+    DEFAULT_PRODUCT,
     DOMAIN,
     FALLBACK_GAS_CONVERSION_FACTOR,
     MAX_SCRAPE_ATTEMPTS,
     RETRY_INTERVAL,
+    SUPPLIER,
     UPDATE_INTERVAL,
     URL,
+    VREG_NETWORK_PAGE,
+    VREG_VTEST_PAGE,
 )
+from .tariffs import (
+    DEFAULT_VAT_RATE,
+    TariffComponents,
+    TariffError,
+    build,
+    parse_network_tariffs,
+    parse_vtest,
+)
+from .vreg import NETWORK_PATTERN, VTEST_PATTERN, Asset, VregError, async_load_asset
 
 _LOGGER = logging.getLogger(__name__)
 _RETRY_AFTER = RETRY_INTERVAL.total_seconds()
@@ -49,6 +67,10 @@ class EnergieBeData:
     injection: float
     gas_conversion_factor: float
     gas_conversion_source: str
+    # None until the options needed to compute it are set, or while both the
+    # fetch and the cache are empty. The five original sensors never depend on
+    # it, so a VREG outage cannot take them down.
+    tariffs: TariffComponents | None = None
 
     @property
     def gas_m3(self) -> float:
@@ -220,6 +242,9 @@ class EnergieBeCoordinator(DataUpdateCoordinator[EnergieBeData]):
         self._session = async_get_clientsession(hass)
         self._ssl_context: ssl.SSLContext | None = None
         self._gcv: GcvReport | None = None
+        self._vtest: Asset | None = None
+        self._network: Asset | None = None
+        self._tariffs: TariffComponents | None = None
 
     async def _async_update_data(self) -> EnergieBeData:
         """Scrape the tariffs and pair them with the current conversion factor."""
@@ -229,7 +254,60 @@ class EnergieBeCoordinator(DataUpdateCoordinator[EnergieBeData]):
             **prices,
             gas_conversion_factor=factor,
             gas_conversion_source=source,
+            tariffs=await self._async_tariff_components(),
         )
+
+    async def _async_tariff_components(self) -> TariffComponents | None:
+        """Return the cost components on top of the energy price.
+
+        Never fails the update. The scraped tariffs and the gas sensors do not
+        depend on VREG, and taking five working sensors down because a
+        regulator's web server was slow would be a worse outage than a stale
+        all-in price -- the same reasoning as the Atrias conversion factor
+        below. A fetch that fails keeps the last known components; with nothing
+        cached, the all-in sensor is simply unavailable.
+        """
+        operator = self.config_entry.options.get(CONF_NETWORK_OPERATOR)
+        if not operator:
+            return None
+
+        try:
+            self._vtest = await async_load_asset(
+                self._session,
+                page_url=VREG_VTEST_PAGE,
+                pattern=VTEST_PATTERN,
+                cached=self._vtest,
+            )
+            self._network = await async_load_asset(
+                self._session,
+                page_url=VREG_NETWORK_PAGE,
+                pattern=NETWORK_PATTERN,
+                cached=self._network,
+            )
+            options = self.config_entry.options
+            self._tariffs = build(
+                network=parse_network_tariffs(
+                    self._network.sheets,
+                    operator=operator,
+                    meter_kind=options.get(CONF_METER_KIND, "digital"),
+                    scheme=options.get(CONF_TARIFF_SCHEME, "single"),
+                ),
+                vtest=parse_vtest(
+                    self._vtest.sheets,
+                    supplier=SUPPLIER,
+                    product=options.get(CONF_PRODUCT, DEFAULT_PRODUCT),
+                    month=dt_util.now().date(),
+                ),
+                vat_rate=float(options.get(CONF_VAT_RATE, DEFAULT_VAT_RATE)),
+            )
+        except (VregError, TariffError) as err:
+            _LOGGER.warning(
+                "Could not refresh the tariff components: %s%s",
+                err,
+                " (keeping the last known values)" if self._tariffs else "",
+            )
+
+        return self._tariffs
 
     async def _async_scrape_prices(self) -> dict[str, float]:
         """Fetch and parse the Energie.be tariff page."""

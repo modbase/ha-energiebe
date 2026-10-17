@@ -23,6 +23,18 @@ FALLBACK_GAS_CONVERSION_FACTOR = 11.54
 CONF_GOS_EAN = "gos_ean"
 CONF_GOS_NAME = "gos_name"
 
+CONF_NETWORK_OPERATOR = "network_operator"
+CONF_METER_KIND = "meter_kind"
+CONF_TARIFF_SCHEME = "tariff_scheme"
+CONF_PRODUCT = "product"
+CONF_VAT_RATE = "vat_rate"
+
+# The supplier whose tariffs this integration reads. A constant rather than an
+# option: the scraped energy component is Energie.be's, so pairing it with
+# another supplier's levies would be meaningless.
+SUPPLIER = "Energie.be"
+DEFAULT_PRODUCT = "Elektriciteit online"
+
 # energie.be indexes its variable tariff monthly, so there is nothing to gain
 # from polling harder than once a day.
 UPDATE_INTERVAL = timedelta(days=1)
