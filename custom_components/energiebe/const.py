@@ -42,3 +42,13 @@ MAX_SCRAPE_ATTEMPTS = 8
 # not transient -- markup we cannot parse -- deliberately wait for the next
 # daily slot instead, since retrying them quickly would only add noise.
 RETRY_INTERVAL = timedelta(minutes=30)
+
+# VREG publishes its spreadsheets at URLs that embed a dated folder and a
+# version suffix, so the asset is found on the page rather than constructed.
+VREG_VTEST_PAGE = (
+    "https://www.vlaamsenutsregulator.be/cijfers/v-test-data-en-energieprijscurves"
+)
+VREG_NETWORK_PAGE = (
+    "https://www.vlaamsenutsregulator.be/elektriciteit-en-aardgas/nettarieven/"
+    "hoeveel-bedragen-de-distributienettarieven"
+)
